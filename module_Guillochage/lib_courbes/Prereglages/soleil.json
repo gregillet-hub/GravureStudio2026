@@ -1,0 +1,12 @@
+{
+    "nom": "Soleil",
+    "description": "Rayons partant du centre",
+    "params": {
+        "traj_type": "Spirale",
+        "wave_type": "Sinus",
+        "nb_lines": 36,
+        "amplitude": 0.5,
+        "height": 20.0,
+        "resolution": "Ultra (Export)"
+    }
+}
