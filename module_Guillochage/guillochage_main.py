@@ -1,4 +1,3 @@
-﻿from guillochage_io import GuillochageIO
 # -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -11,6 +10,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
+# Import des modules internes
+try: from guillochage_io import GuillochageIO
+except ImportError as e: print(f"Err IO: {e}")
 try: from guillochage_forme import FormePanel
 except ImportError as e: print(f"Err Forme: {e}")
 try: from guillochage_calques import CalquesPanel
@@ -127,9 +129,6 @@ class ModuleApp:
         
         self.start_autosave_timer()
         
-        # Zone 5 masquée par défaut
-        # self.toggle_zone5()
-        
         # Premier calcul
         self._perform_calculation()
 
@@ -145,7 +144,7 @@ class ModuleApp:
         try:
             layers_state = self.panneau_calques.get_all_layers_state()
             brut_data = self.panneau_forme.get_shape_data()
-            render_data = self.engine.calculate_geometry(layers_state, self.panneau_forme.get_shape_data())
+            render_data = self.engine.calculate_geometry(layers_state, brut_data)
             
             if hasattr(self, 'panneau_canvas'):
                 if hasattr(self.panneau_canvas, 'set_calculated_lines'):
@@ -424,33 +423,90 @@ class ModuleApp:
             self.lbl_z4_title.config(text=self.t("z4_title_global"), fg="white")
             self.panneau_courbes.set_params(merged_params)
 
+    # -------------------------------------------------------------
+    # GESTION DES EXPORTS
+    # -------------------------------------------------------------
+    def action_export_global_svg(self): self._perform_export("svg", "global")
+    def action_export_layer_svg(self): self._perform_export("svg", "layer")
+    def action_export_batch_folder(self, fmt="svg"): self._perform_export_batch_folder(fmt)
+    
+    def action_export_global_dxf(self): self._perform_export("dxf", "global")
+    def action_export_layer_dxf(self): self._perform_export("dxf", "layer")
+
+    def _perform_export(self, fmt, mode):
+        """Méthode simple pour export Fichier Unique"""
+        try:
+            if mode == "global":
+                layers_to_export = self.panneau_calques.get_all_layers_state()
+            else:
+                single = self.panneau_calques.get_selected_layer_state()
+                if not single:
+                    messagebox.showwarning("Export", "Aucun calque sélectionné.")
+                    return
+                single["visible"] = True
+                layers_to_export = [single]
+
+            brut_data = self.panneau_forme.get_shape_data()
+            render_list = self.engine.calculate_geometry(layers_to_export, brut_data)
+            
+            if not render_list:
+                messagebox.showinfo("Export", "Rien à exporter (géométrie vide).")
+                return
+
+            ext = f".{fmt}"
+            ftypes = [(f"{fmt.upper()} File", ext)]
+            filename = filedialog.asksaveasfilename(defaultextension=ext, filetypes=ftypes, title=f"Export {fmt.upper()} ({mode})")
+            
+            if filename:
+                if fmt == "svg":
+                    GuillochageIO.export_svg(filename, render_list, brut_data)
+                else:
+                    GuillochageIO.export_dxf(filename, render_list, brut_data)
+                messagebox.showinfo("Succès", f"Export réussi :\n{filename}")
+                
+        except Exception as e:
+            messagebox.showerror("Erreur Export", str(e))
+
+    def _perform_export_batch_folder(self, fmt):
+        """EXPORTE UN FICHIER PAR CALQUE DANS UN DOSSIER"""
+        try:
+            target_dir = filedialog.askdirectory(title="Choisir le dossier pour l'export")
+            if not target_dir: return
+
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            export_folder = os.path.join(target_dir, f"Guillochage_Export_{timestamp}")
+            os.makedirs(export_folder, exist_ok=True)
+            
+            all_layers = self.panneau_calques.get_all_layers_state()
+            brut_data = self.panneau_forme.get_shape_data()
+            
+            count = 0
+            
+            for layer in all_layers:
+                layer_copy = layer.copy()
+                layer_copy["visible"] = True
+                
+                render_list = self.engine.calculate_geometry([layer_copy], brut_data)
+                
+                clean_name = "".join([c for c in layer["name"] if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+                if not clean_name: clean_name = f"Calque_{count}"
+                
+                filename = f"{clean_name}.{fmt}"
+                full_path = os.path.join(export_folder, filename)
+                
+                if fmt == "svg":
+                    GuillochageIO.export_svg(full_path, render_list, brut_data)
+                else:
+                    GuillochageIO.export_dxf(full_path, render_list, brut_data)
+                
+                count += 1
+                
+            messagebox.showinfo("Export Batch", f"Terminé !\n{count} fichiers générés dans :\n{export_folder}")
+
+        except Exception as e:
+            messagebox.showerror("Erreur Export Batch", str(e))
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = ModuleApp(root)
     root.mainloop()
-
-
-
-    def action_export_file(self, format_type="svg"):
-        try:
-            # Récupération des données fraîches
-            layers_state = self.panneau_calques.get_all_layers_state()
-            # Sécurisation si panneau_forme plante ou est vide
-            try: brut_data = self.panneau_forme.get_shape_data()
-            except: brut_data = {"dim1": 50, "dim2": 50}
-            
-            # Calcul de la géométrie
-            render_list = self.engine.calculate_geometry(layers_state, brut_data)
-            
-            # Dialogue d'enregistrement
-            ext = f".{format_type}"
-            path = filedialog.asksaveasfilename(defaultextension=ext, filetypes=[(format_type.upper(), ext)])
-            
-            if path:
-                if format_type == "svg":
-                    GuillochageIO.export_svg(path, render_list, brut_data)
-                else:
-                    GuillochageIO.export_dxf(path, render_list)
-                messagebox.showinfo("Export", f"Fichier sauvegardé :\n{path}")
-        except Exception as e:
-            messagebox.showerror("Erreur Export", str(e))
