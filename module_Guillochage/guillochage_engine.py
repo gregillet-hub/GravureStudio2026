@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import math
 import os
 import importlib.util
@@ -50,12 +50,10 @@ class GuillochageEngine:
             brut_h = float(brut_data.get("dim2", 50.0))
             idx = brut_data.get("type_index", 0)
             is_circle = (idx == 0)
-            # Récupération du rayon des coins (0 si cercle ou si non défini)
             corner_radius = float(brut_data.get("radius", 0.0)) if not is_circle else 0.0
         except:
             brut_w, brut_h, is_circle, corner_radius = 50.0, 50.0, True, 0.0
 
-        # Diagonale pour rotation
         diag = math.hypot(brut_w, brut_h)
         gen_len = diag * 1.2 
         max_dim = max(brut_w, brut_h)
@@ -68,6 +66,10 @@ class GuillochageEngine:
             params = data.get("global", {})
             color = layer.get("color", "black")
             thickness = float(params.get("thickness", 1.0))
+            
+            # --- RECUPERATION OPTIONS MIROIR ---
+            is_mir_h = params.get("mirror_h", False)
+            is_mir_v = params.get("mirror_v", False)
             
             traj_name = params.get("traj_type", "ligne_droite")
             traj_func = self._get_trajectory_func(traj_name)
@@ -86,7 +88,6 @@ class GuillochageEngine:
             amp_start = float(params.get("amp_start", 1.0))
             amp_end = float(params.get("amp_end", 3.0))
 
-            # Repartition Verticale (Plein Cadre)
             h_eff = brut_h - (marge_user * 2)
             min_y_axis = -h_eff / 2
             max_y_axis = h_eff / 2
@@ -103,6 +104,17 @@ class GuillochageEngine:
 
             raw_polylines = []
             
+            # Résolution
+            res_key = str(params.get("resolution", "Moyenne"))
+            if "Faible" in res_key: steps = 200
+            elif "Haute" in res_key: steps = 2000
+            elif "Ultra" in res_key: steps = 10000
+            else: steps = 800 
+
+            nb_cycles_user = float(params.get("period", 10.0))
+            phase_user = float(params.get("phase", 0.0))
+            cycles_per_mm = nb_cycles_user / max_dim
+            
             for i in range(nb):
                 current_params = params.copy()
                 current_params["line_index"] = i
@@ -115,27 +127,14 @@ class GuillochageEngine:
 
                 pts = []
                 
-                # Résolution
-                res_key = str(params.get("resolution", "Moyenne"))
-                if "Faible" in res_key: steps = 200
-                elif "Haute" in res_key: steps = 2000
-                elif "Ultra" in res_key: steps = 10000
-                else: steps = 800 
-
-                nb_cycles_user = float(params.get("period", 10.0))
-                phase_user = float(params.get("phase", 0.0))
-                cycles_per_mm = nb_cycles_user / max_dim
-                
                 for j in range(steps + 1):
                     t = j / steps
                     
-                    # 1. Trajectoire
                     (tx, ty), (nx, ny) = traj_func(t, current_params)
                     
                     if "ligne" in traj_name.lower() or "straight" in traj_name.lower():
                         ty = current_params["y_base"]
                     
-                    # 2. Onde
                     dist_mm = t * gen_len
                     dist_relative_to_brut = dist_mm - start_offset_mm
                     angle_wave = dist_relative_to_brut * cycles_per_mm * 2 * math.pi
@@ -143,7 +142,6 @@ class GuillochageEngine:
                     
                     offset_val = self._eval_wave(wave_name, angle_wave)
                     
-                    # Flambage
                     if is_flambage:
                         current_amp = amp_start + (amp_end - amp_start) * t
                     else:
@@ -152,19 +150,22 @@ class GuillochageEngine:
                     fx = tx + nx * offset_val * current_amp
                     fy = ty + ny * offset_val * current_amp
                     
-                    # 3. Rotation
+                    # Rotation
                     rx = fx * cr - fy * sr 
                     ry = fx * sr + fy * cr
                     
-                    # 4. Position
+                    # Position
                     final_x = rx + pos_x
                     final_y = ry + pos_y
+                    
+                    # --- APPLICATION MIROIR (APRES TOUT) ---
+                    if is_mir_h: final_x = -final_x
+                    if is_mir_v: final_y = -final_y
                     
                     pts.append((final_x, final_y))
                 
                 raw_polylines.append(pts)
 
-            # Clipping avec Rayons de coins
             for poly in raw_polylines:
                 clipped = self._clip_polyline(poly, is_circle, brut_w, brut_h, corner_radius)
                 for seg in clipped:
@@ -179,73 +180,49 @@ class GuillochageEngine:
         return render_list
 
     def _clip_polyline(self, points, is_circle, w, h, r_corner):
-        """
-        Découpe intelligente prenant en compte les coins arrondis.
-        """
         segments = []
         current_segment = []
         
-        # Dimensions brutes (bords)
         rx = w / 2
         ry = h / 2
         rx_sq = rx**2
         ry_sq = ry**2
 
-        # Fonction locale pour tester si un point est dedans
         def is_inside(p):
             px, py = p
-            # 1. Cas CERCLE
             if is_circle:
                 if rx_sq > 0 and ry_sq > 0:
                     return (px*px)/rx_sq + (py*py)/ry_sq <= 1.00001
                 return False
             
-            # 2. Cas RECTANGLE
-            # D'abord, on vérifie la boîte englobante globale
             if not (-rx <= px <= rx and -ry <= py <= ry):
                 return False
             
-            # Si pas de rayon, c'est bon (car on est dans la boîte)
-            if r_corner <= 0:
-                return True
+            if r_corner <= 0: return True
             
-            # 3. Gestion des Coins Arrondis
-            # On travaille en valeur absolue pour traiter les 4 coins d'un coup
             ax, ay = abs(px), abs(py)
-            
-            # Limites des centres des cercles de coins
             cx = rx - r_corner
             cy = ry - r_corner
             
-            # Si on est dans la zone d'un coin (extérieur à la croix centrale)
             if ax > cx and ay > cy:
-                # On vérifie la distance par rapport au centre du coin
                 dx = ax - cx
                 dy = ay - cy
-                # Pythagore : est-ce qu'on est dans le rayon ?
                 return (dx*dx + dy*dy) <= (r_corner * r_corner)
-            
-            # Si on n'est pas dans la zone des coins, on est dans la croix centrale -> Dedans
             return True
 
-        # Fonction locale Dichotomie (ne change pas, elle utilise is_inside mis à jour)
         def get_intersection(p1, p2):
             in_p, out_p = p1, p2
             if not is_inside(p1): in_p, out_p = p2, p1
-            
-            for _ in range(12): # Un peu plus de précision pour les arrondis
+            for _ in range(12): 
                 mid_x = (in_p[0] + out_p[0]) / 2
                 mid_y = (in_p[1] + out_p[1]) / 2
                 mid = (mid_x, mid_y)
-                if is_inside(mid):
-                    in_p = mid
-                else:
-                    out_p = mid
+                if is_inside(mid): in_p = mid
+                else: out_p = mid
             return in_p
 
         if not points: return []
         
-        # Boucle principale de découpe
         p_prev = points[0]
         prev_inside = is_inside(p_prev)
         if prev_inside:
@@ -257,13 +234,11 @@ class GuillochageEngine:
             
             if prev_inside and curr_inside:
                 current_segment.append(p_curr)
-            
             elif prev_inside and not curr_inside:
                 inter = get_intersection(p_prev, p_curr)
                 current_segment.append(inter)
                 segments.append(current_segment)
                 current_segment = []
-                
             elif not prev_inside and curr_inside:
                 inter = get_intersection(p_curr, p_prev)
                 current_segment = [inter, p_curr]
@@ -271,7 +246,5 @@ class GuillochageEngine:
             p_prev = p_curr
             prev_inside = curr_inside
             
-        if current_segment:
-            segments.append(current_segment)
-            
+        if current_segment: segments.append(current_segment)
         return segments
