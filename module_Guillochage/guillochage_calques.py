@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk
 from tkinter import colorchooser
@@ -45,7 +45,8 @@ class CalqueRow(tk.Frame):
                     "nb_lines": 12.0, "amplitude": 2.0, "invert": False, "height": 10.0,
                     "period": 1.0, "phase": 0.0, "rotation": 0.0, "pos_x": 0.0, "pos_y": 0.0,
                     "thickness": 1.0, "margin_in": 0.0, "margin_out": 0.0,
-                    "flambage": False, "amp_start": 1.0, "amp_end": 3.0, "resolution": "Moyenne"
+                    "flambage": False, "amp_start": 1.0, "amp_end": 3.0, "resolution": "Moyenne",
+                    "mirror_h": False, "mirror_v": False
                 },
                 "lines": []
             }
@@ -87,6 +88,8 @@ class CalqueRow(tk.Frame):
         self.data["lines"] = new_lines
 
     def update_params_from_zone4(self, new_params, target_line_index=None):
+        if self.is_locked: return
+
         if target_line_index is None:
             self.data["global"].update(new_params)
             self.regenerate_lines()
@@ -102,16 +105,17 @@ class CalqueRow(tk.Frame):
                 self.data["lines"][target_line_index]["override"] = override
 
     def delete_line_at(self, index):
+        if self.is_locked: return 
         if 0 <= index < len(self.data["lines"]):
             del self.data["lines"][index]
             self.data["global"]["nb_lines"] = float(len(self.data["lines"]))
             for i, line in enumerate(self.data["lines"]): line["id"] = i + 1
 
     def insert_lines_at(self, index, lines_to_insert):
+        if self.is_locked: return 
         insert_pos = index + 1
         copies = []
         for line in lines_to_insert:
-            # Copie profonde pour éviter les liens
             import copy
             new_line = copy.deepcopy(line)
             new_line["id"] = 0
@@ -123,8 +127,12 @@ class CalqueRow(tk.Frame):
     @property
     def params(self): return self.data["global"]
 
-    def on_rename_typing(self, event=None): self.manager.notify_update(self)
+    def on_rename_typing(self, event=None): 
+        if self.is_locked: return 
+        self.manager.notify_update(self)
+        
     def change_color_manual(self, event=None):
+        if self.is_locked: return 
         color = colorchooser.askcolor(title="Choisir une couleur", initialcolor=self.color)[1]
         if color:
             self.update_visuals(self.var_name.get(), color)
@@ -134,20 +142,30 @@ class CalqueRow(tk.Frame):
         self.color = color
         self.var_name.set(name)
         self.color_frame.config(bg=color)
+
     def toggle_visible(self):
         self.is_visible = not self.is_visible
         self.btn_eye.config(text="👁" if self.is_visible else "🚫", fg="#d4d4d4" if self.is_visible else "#666")
+        self.manager.notify_change()
+
     def toggle_lock(self):
         self.is_locked = not self.is_locked
-        self.btn_lock.config(text="🔒" if self.is_locked else "🔓", fg="#d4d4d4" if self.is_locked else "#969696")
+        self.update_lock_visuals()
+
     def set_lock(self, state):
         self.is_locked = state
+        self.update_lock_visuals()
+
+    def update_lock_visuals(self):
         self.btn_lock.config(text="🔒" if self.is_locked else "🔓", fg="#d4d4d4" if self.is_locked else "#969696")
+        self.entry_name.config(state="disabled" if self.is_locked else "normal")
+
     def set_visible(self, state):
         self.is_visible = state
         self.btn_eye.config(text="👁" if self.is_visible else "🚫", fg="#d4d4d4" if self.is_visible else "#666")
         
     def select_me(self, event=None): self.manager.select_row(self)
+    
     def set_selected_visual(self, is_selected):
         bg_color = "#007acc" if is_selected else "#2d2d30"
         fg_text = "white" if is_selected else "#d4d4d4"
@@ -174,7 +192,8 @@ class CalquesPanel:
             ("🗑️", "z2_tt_del", self.action_delete), 
             ("↑", "z2_tt_up", self.action_up), 
             ("↓", "z2_tt_down", self.action_down), 
-            ("⇄", "z2_tt_mir", self.action_mirror), 
+            ("↔", "z2_tt_mir_h", self.action_mirror_h), 
+            ("↕", "z2_tt_mir_v", self.action_mirror_v), 
             ("↻", "z2_tt_rot", self.action_rotate)
         ]
         
@@ -193,6 +212,10 @@ class CalquesPanel:
         return key
         
     def refresh_ui(self): pass
+
+    def notify_change(self):
+        if self.app and hasattr(self.app, 'trigger_calculation'):
+            self.app.trigger_calculation()
 
     def update_active_calque_data(self, name, color):
         if self.selected_row: self.selected_row.update_visuals(name, color)
@@ -214,6 +237,7 @@ class CalquesPanel:
         row.pack(fill="x", pady=1)
         self.rows.append(row)
         self.select_row(row)
+        self.notify_change()
     
     def refresh_view(self):
         for row in self.rows: row.pack_forget()
@@ -225,11 +249,15 @@ class CalquesPanel:
     
     def action_delete(self):
         if self.selected_row:
+            if self.selected_row.is_locked: return 
             self.selected_row.destroy()
             self.rows.remove(self.selected_row)
             self.selected_row = None 
-        if self.rows: self.select_row(self.rows[-1])
-        elif not self.rows: self.action_add() # Toujours un calque
+        if self.rows: 
+            self.select_row(self.rows[-1])
+            self.notify_change()
+        elif not self.rows: 
+            self.action_add()
         
     def action_duplicate(self):
         if self.selected_row: 
@@ -243,26 +271,50 @@ class CalquesPanel:
             if idx > 0:
                 self.rows[idx], self.rows[idx-1] = self.rows[idx-1], self.rows[idx]
                 self.refresh_view()
+                self.notify_change()
     def action_down(self):
         if self.selected_row and len(self.rows) > 1:
             idx = self.rows.index(self.selected_row)
             if idx < len(self.rows) - 1:
                 self.rows[idx], self.rows[idx+1] = self.rows[idx+1], self.rows[idx]
                 self.refresh_view()
-    def action_mirror(self): 
-        if self.selected_row: 
+                self.notify_change()
+                
+    # --- MIROIR HORIZONTAL (Basculement flag) ---
+    def action_mirror_h(self): 
+        if self.selected_row:
+            if self.selected_row.is_locked: return 
             import copy
             new_data = copy.deepcopy(self.selected_row.data)
-            # Logique Miroir (inverse Y) à implémenter si besoin
-            self.add_calque_row(f"{self.selected_row.var_name.get()} (Miroir)", data=new_data)
+            
+            # On inverse simplement le flag miroir H pour le nouveau calque
+            val = new_data["global"].get("mirror_h", False)
+            new_data["global"]["mirror_h"] = not val
+            
+            self.add_calque_row(f"{self.selected_row.var_name.get()} (Mir H)", data=new_data)
+
+    # --- MIROIR VERTICAL (Basculement flag) ---
+    def action_mirror_v(self):
+        if self.selected_row:
+            if self.selected_row.is_locked: return
+            import copy
+            new_data = copy.deepcopy(self.selected_row.data)
+            
+            # On inverse le flag miroir V
+            val = new_data["global"].get("mirror_v", False)
+            new_data["global"]["mirror_v"] = not val
+            
+            self.add_calque_row(f"{self.selected_row.var_name.get()} (Mir V)", data=new_data)
+
     def action_rotate(self):
         if self.selected_row: 
+            if self.selected_row.is_locked: return 
             import copy
             new_data = copy.deepcopy(self.selected_row.data)
-            # Logique Rotation à implémenter si besoin
-            self.add_calque_row(f"{self.selected_row.var_name.get()} (90°)", data=new_data)
+            current_rot = float(new_data["global"].get("rotation", 0.0))
+            new_data["global"]["rotation"] = current_rot + 90.0
+            self.add_calque_row(f"{self.selected_row.var_name.get()} (+90°)", data=new_data)
 
-    # --- NOUVELLES METHODES IMPORT/EXPORT POUR LE MAIN ---
     def get_all_layers_state(self):
         state_list = []
         for row in self.rows:
@@ -271,13 +323,12 @@ class CalquesPanel:
                 "color": row.color,
                 "visible": row.is_visible,
                 "locked": row.is_locked,
-                "data": row.data # Contient global + lines
+                "data": row.data 
             }
             state_list.append(layer_state)
         return state_list
 
     def load_all_layers_state(self, state_list):
-        # Vider l'existant
         for row in self.rows: row.destroy()
         self.rows = []
         self.selected_row = None
