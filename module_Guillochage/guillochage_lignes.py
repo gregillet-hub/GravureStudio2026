@@ -1,411 +1,244 @@
 # -*- coding: utf-8 -*-
+"""
+Module CanvasPanel - Affichage central du guillochage
+"""
 import tkinter as tk
-from tkinter import ttk
-class ToolTip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tip_window = None
-        self.widget.bind("<Enter>", self.show_tip)
-        self.widget.bind("<Leave>", self.hide_tip)
-    def show_tip(self, event=None):
-        if self.tip_window or not self.text: return
-        try:
-            x, y, _, _ = self.widget.bbox("insert")
-            x += self.widget.winfo_rootx() + 25
-            y += self.widget.winfo_rooty() + 25
-            self.tip_window = tw = tk.Toplevel(self.widget)
-            tw.wm_overrideredirect(True)
-            tw.wm_geometry(f"+{x}+{y}")
-            label = tk.Label(tw, text=self.text, justify=tk.LEFT, background="#ffffe0", relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 8))
-            label.pack(ipadx=1)
-        except: pass
-    def hide_tip(self, event=None):
-        if self.tip_window:
-            self.tip_window.destroy()
-            self.tip_window = None
+import math
 
-COL_CONFIG = [
-    ("wave_type",  "z5_col_type",   3, str),
-    ("invert",     "z5_col_inv",    1,  lambda x: "Oui" if x else "-"),
-    ("amplitude",  "z5_col_ampl",   2,  "{:.2f}"),
-    ("height",     "z5_col_height", 2,  "{:.1f}"),
-    ("period",     "z5_col_period", 1,  "{:.1f}"),
-    ("phase",      "z5_col_phase",  1,  "{:.0f}°"),
-    ("rotation",   "z5_col_rot",    1,  "{:.0f}°"),
-    ("resolution", "z5_col_res",    2,  str),
-    ("thickness",  "z5_col_thick",  1,  "{:.1f}"),
-    ("flambage",   "z5_col_flb",    1,  lambda x: "Oui" if x else "-")
-]
-
-class LigneRow(tk.Frame):
-    def __init__(self, parent, manager, index, line_dict, global_params, calque_color):
-        super().__init__(parent, bg="#2d2d30", pady=2)
-        self.manager = manager
-        self.index = index
-        self.line_dict = line_dict
-        
-        # État Supprimé (Corbeille)
-        self.is_deleted = line_dict.get("is_deleted", False)
-
-        # Fusion pour affichage des valeurs réelles
-        self.final_params = global_params.copy()
-        self.final_params.update(line_dict.get("override", {}))
-        
-        # État "Surchargé" (Override) - La ligne est-elle modifiée ?
-        self.has_override = bool(line_dict.get("override"))
-        
-        # --- Gestion des couleurs (Gris si supprimé, Normal sinon) ---
-        if self.is_deleted:
-            self.default_fg = "#666666" 
-            self.bg_color = "#222222"
-        else:
-            self.default_fg = "#ffae00" if self.has_override else "#d4d4d4"
-            self.bg_color = "#2d2d30"
-
-        self.config(bg=self.bg_color)
-        
-        self.elements = []
-        
-        # 1. CheckBox Active/Inactive
-        self.var_active = tk.BooleanVar(value=line_dict.get("is_active", True))
-        self.chk = tk.Checkbutton(self, variable=self.var_active, bg=self.bg_color, activebackground=self.bg_color, selectcolor="#2d2d30", bd=0, command=self.on_toggle_active)
-        self.chk.grid(row=0, column=0, sticky="w", padx=(5, 2))
-        # Si supprimé, on désactive la checkbox (la ligne n'existe plus virtuellement)
-        if self.is_deleted: self.chk.config(state="disabled")
-        self.elements.append(self.chk)
-
-        # 2. ID (Numéro de ligne)
-        # Style barré si supprimé
-        font_style = ("Segoe UI", 9, "bold" if self.has_override else "normal")
-        if self.is_deleted: font_style = ("Segoe UI", 9, "overstrike")
-        
-        self.lbl_idx = tk.Label(self, text=f"{index + 1:02d}", fg=self.default_fg, bg=self.bg_color, width=3, font=font_style)
-        self.lbl_idx.grid(row=0, column=1, sticky="w")
-        self.elements.append(self.lbl_idx)
-
-        # 3. Indicateur Couleur Calque
-        self.canvas_color = tk.Canvas(self, width=14, height=14, bg=self.bg_color, highlightthickness=0)
-        if not self.is_deleted:
-            self.canvas_color.create_rectangle(1, 1, 13, 13, fill=calque_color, outline="#555")
-        self.canvas_color.grid(row=0, column=2, padx=5)
-        self.elements.append(self.canvas_color)
-
-        # 4. Colonnes de données (Texte)
-        current_col = 3
-        for key, title_key, weight, fmt in COL_CONFIG:
-            raw_val = self.final_params.get(key, 0)
-            if callable(fmt): val_str = fmt(raw_val)
-            elif isinstance(fmt, str): val_str = fmt.format(float(raw_val)) if isinstance(raw_val, (int, float)) else str(raw_val)
-            else: val_str = str(raw_val)
-            
-            # Traduction Noms Fichiers
-            if key == "wave_type" or key == "traj_type":
-                base_name = str(raw_val).replace(".py", "")
-                if base_name.startswith("traj_"): base_name = base_name[5:]
-                if base_name.startswith("onde_"): base_name = base_name[5:]
-                trans_key = "file_" + base_name.lower()
-                translated = self.manager.t(trans_key)
-                if translated != trans_key: val_str = translated
-                else: val_str = base_name.replace("_", " ").title()
-            
-            # Traduction Résolution
-            if key == "resolution":
-                res_map = {
-                    "Faible (Rapide)": "z4_val_res_low", "Moyenne": "z4_val_res_med",
-                    "Haute": "z4_val_res_high", "Ultra (Export)": "z4_val_res_ultra"
-                }
-                if val_str in res_map: val_str = self.manager.t(res_map[val_str])
-
-            if self.is_deleted: val_str = "---"
-
-            l = tk.Label(self, text=val_str, fg="#666" if self.is_deleted else "#969696", bg=self.bg_color, anchor="c", font=("Segoe UI", 9))
-            l.grid(row=0, column=current_col, sticky="ew", padx=1)
-            self.columnconfigure(current_col, weight=weight)
-            self.elements.append(l)
-            l.bind("<Button-1>", self.on_simple_click)
-            current_col += 1
-
-        # 5. Actions (Boutons à droite)
-        self.frame_actions = tk.Frame(self, bg=self.bg_color)
-        self.frame_actions.grid(row=0, column=99, sticky="e", padx=(5, 10))
-        self.columnconfigure(99, weight=0)
-        self.elements.append(self.frame_actions)
-        
-        # Bouton Éditer (Crayon)
-        btn_edit = tk.Button(self.frame_actions, text="✎", command=self.on_edit_click, bg="#3e3e42", fg="white", bd=0, width=3, cursor="hand2")
-        btn_edit.pack(side="left", padx=2)
-        if self.is_deleted: btn_edit.config(state="disabled", bg="#222")
-        ToolTip(btn_edit, self.manager.t("z5_act_edit"))
-        
-        # Bouton Reset (Actif si Override OU si Supprimé)
-        # Permet de restaurer une ligne supprimée ou de remettre à zéro une ligne modifiée
-        can_reset = self.has_override or self.is_deleted
-        state_reset = "normal" if can_reset else "disabled"
-        fg_reset = "white" if can_reset else "#555"
-        
-        self.btn_reset = tk.Button(self.frame_actions, text="⟲", command=self.on_reset, state=state_reset, bg="#3e3e42", fg=fg_reset, bd=0, width=3, cursor="hand2")
-        self.btn_reset.pack(side="left", padx=2)
-        ToolTip(self.btn_reset, self.manager.t("z5_act_reset"))
-
-        # Bouton Supprimer / Restaurer
-        # Si supprimé -> Icone Recycler (Vert), sinon Poubelle (Rouge)
-        icon_del = "♻" if self.is_deleted else "🗑️"
-        fg_del = "#4CAF50" if self.is_deleted else "#f48771"
-        tooltip_del = "Restaurer" if self.is_deleted else self.manager.t("z5_act_del")
-        
-        btn_del = tk.Button(self.frame_actions, text=icon_del, command=self.on_toggle_delete, bg="#3e3e42", fg=fg_del, bd=0, width=3, cursor="hand2")
-        btn_del.pack(side="left", padx=2)
-        ToolTip(btn_del, tooltip_del)
-
-        # --- BINDINGS UNIVERSELS (Clic partout = Sélection) ---
-        all_widgets = [self, self.lbl_idx, self.canvas_color, self.frame_actions] + self.elements
-        for w in all_widgets:
-            # IMPORTANT: On EXCLUT la Checkbox et les Boutons du clic de sélection global
-            # pour éviter qu'ils ne soient "bloqués" ou qu'ils déclenchent la sélection au lieu de leur action.
-            if isinstance(w, (tk.Button, tk.Checkbutton)): continue
-            
-            w.bind("<Button-1>", self.on_simple_click, add="+")
-            w.bind("<Control-Button-1>", self.on_multi_select, add="+")
-            w.bind("<Button-3>", self.on_right_click, add="+")
-            
-        self.bind("<Enter>", self.on_enter)
-        self.bind("<Leave>", self.on_leave)
-        for el in self.elements:
-            if isinstance(el, tk.Label):
-                el.bind("<Enter>", self.on_enter)
-                el.bind("<Leave>", self.on_leave)
-
-    def on_enter(self, event=None):
-        if self.index not in self.manager.selected_indices and self.index != self.manager.editing_index:
-            self.configure_bg("#353538" if not self.is_deleted else "#2a2a2a")
-
-    def on_leave(self, event=None):
-        if self.index not in self.manager.selected_indices and self.index != self.manager.editing_index:
-            self.configure_bg(self.bg_color)
-
-    def configure_bg(self, color):
-        self.config(bg=color)
-        for w in self.elements:
-            if isinstance(w, tk.Label): w.config(bg=color)
-            elif isinstance(w, tk.Checkbutton): w.config(bg=color, activebackground=color)
-            elif isinstance(w, tk.Frame) or isinstance(w, tk.Canvas): w.config(bg=color)
-
-    def on_simple_click(self, event=None): 
-        self.manager.highlight_row_only(self.index)
-        
-    def on_edit_click(self): 
-        if self.is_deleted: return
-        self.manager.select_row_for_editing(self.index)
-        
-    def on_multi_select(self, event=None): self.manager.toggle_selection(self.index)
-    
-    def on_right_click(self, event=None):
-        if self.index not in self.manager.selected_indices:
-            self.manager.highlight_row_only(self.index)
-        self.manager.show_context_menu(event)
-
-    def on_reset(self):
-        # Reset total : On enlève les overrides ET on restaure si supprimé
-        self.line_dict["override"] = {}
-        self.line_dict["is_deleted"] = False
-        self.manager.refresh_needed()
-        self.manager.trigger_redraw()
-
-    def on_toggle_delete(self): 
-        # Bascule Supprimé / Actif
-        # Si on supprime, on passe is_deleted à True -> Le moteur l'ignorera (trou visuel)
-        # Si on restaure, on passe is_deleted à False -> Le moteur la dessinera
-        self.line_dict["is_deleted"] = not self.is_deleted
-        self.manager.refresh_needed()
-        self.manager.trigger_redraw()
-
-    def on_toggle_active(self): 
-        # Checkbox activée/désactivée
-        self.line_dict["is_active"] = self.var_active.get()
-        self.manager.trigger_redraw()
-
-    def set_selected(self, state, is_editing_mode=False):
-        if is_editing_mode: bg = "#007acc"
-        elif state: bg = "#444444"
-        else: bg = self.bg_color
-        
-        fg_normal = "white" if state else ("#666" if self.is_deleted else "#969696")
-        fg_special = "white" if state else self.default_fg
-        
-        self.config(bg=bg)
-        for w in self.elements:
-            if isinstance(w, tk.Label):
-                is_idx = (w == self.lbl_idx)
-                w.config(bg=bg, fg=fg_special if is_idx else fg_normal)
-            elif isinstance(w, tk.Checkbutton): w.config(bg=bg, activebackground=bg, selectcolor="#2d2d30")
-            elif isinstance(w, tk.Frame) or isinstance(w, tk.Canvas): w.config(bg=bg)
-
-class LignesPanel:
-    def __init__(self, parent_frame, app_instance=None, on_line_select_callback=None, on_delete_callback=None, on_paste_callback=None):
+class CanvasPanel:
+    def __init__(self, parent_frame):
         self.parent = parent_frame
-        self.app = app_instance
-        self.on_line_select_callback = on_line_select_callback
-        self.on_delete_callback = on_delete_callback
-        self.on_paste_callback = on_paste_callback
         
-        self.rows = []
-        self.current_calque_global = {}
-        self.current_calque_lines = []
-        self.current_calque_color = "#ffffff"
-        self.selected_indices = set()
-        self.editing_index = None
-
-        self.header = tk.Frame(self.parent, bg="#333333", height=30)
-        self.header.pack(fill="x", side="top")
+        # État de la vue
+        self.zoom_level = 1.0
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self.show_grid = True
+        self.auto_fit_mode = True
         
-        self.header_labels = [] 
-
-        tk.Label(self.header, text="✓", bg="#333333", fg="#d4d4d4", width=3, font=("Segoe UI", 9, "bold")).grid(row=0, column=0, padx=2)
-        tk.Label(self.header, text="ID", bg="#333333", fg="#d4d4d4", width=3, font=("Segoe UI", 9, "bold")).grid(row=0, column=1)
-        tk.Label(self.header, text="Col", bg="#333333", fg="#d4d4d4", width=3, font=("Segoe UI", 9, "bold")).grid(row=0, column=2)
+        # État 2.5D (Simulation Outil)
+        self.render_mode_25d = False
         
-        col_idx = 3
-        for _, title_key, weight, _ in COL_CONFIG:
-            txt = self.t(title_key)
-            lbl = tk.Label(self.header, text=txt, bg="#333333", fg="#d4d4d4", font=("Segoe UI", 9, "bold"), anchor="c")
-            lbl.grid(row=0, column=col_idx, sticky="ew", padx=1)
-            self.header.columnconfigure(col_idx, weight=weight)
-            self.header_labels.append((lbl, title_key))
-            col_idx += 1
-            
-        self.btn_back_calque = tk.Button(self.header, text="Retour Calque", command=self.deselect_all, bg="#444", fg="white", bd=0, font=("Segoe UI", 8), padx=5)
-        self.btn_back_calque.grid(row=0, column=98, sticky="e", padx=5)
-
-        self.lbl_actions = tk.Label(self.header, text=self.t("z5_col_actions"), bg="#333333", fg="#007acc", width=12, font=("Segoe UI", 9, "bold"), anchor="e")
-        self.lbl_actions.grid(row=0, column=99, sticky="e", padx=10)
-        self.header.columnconfigure(99, weight=0)
-
-        self.canvas = tk.Canvas(self.parent, bg="#252526", highlightthickness=0)
-        self.scrollbar = tk.Scrollbar(self.parent, orient="vertical", command=self.canvas.yview)
-        self.list_frame = tk.Frame(self.canvas, bg="#252526")
+        # Données sources
+        self.brut_data = None
+        self.calculated_lines = []
         
-        self.window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        # État de surbrillance (Selection Zone 5)
+        self.highlight_layer = None
+        self.highlight_index = None
         
-        def on_canvas_configure(event):
-            self.canvas.itemconfig(self.window_id, width=event.width)
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        self.canvas.bind("<Configure>", on_canvas_configure)
-        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        # Création du canvas
+        self.canvas = tk.Canvas(self.parent, bg="#ffffff", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
         
-        self.list_frame.bind("<Button-1>", self.deselect_all)
-        self.canvas.bind("<Button-1>", self.deselect_all)
+        # Bindings
+        self.canvas.bind("<ButtonPress-3>",   self.start_pan)
+        self.canvas.bind("<B3-Motion>",       self.do_pan)
+        self.canvas.bind("<MouseWheel>",      self.do_zoom)
+        self.canvas.bind("<Button-4>",        lambda e: self.do_zoom(e, 1))
+        self.canvas.bind("<Button-5>",        lambda e: self.do_zoom(e, -1))
+        self.canvas.bind("<Configure>",       self.on_resize)
+
+        # Overlay en haut à droite
+        self.overlay_frame = tk.Frame(self.canvas, bg="#3e3e42", bd=1, relief="solid")
+        self.overlay_frame.place(relx=1.0, x=-10, y=10, anchor="ne")
         
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
+        btn_c = tk.Button(self.overlay_frame, text="⌂", command=self.reset_view_to_fit, bg="#2d2d30", fg="#d4d4d4", bd=0, width=3)
+        btn_c.pack(side="left", padx=1)
+        btn_g = tk.Button(self.overlay_frame, text="#", command=self.toggle_grid, bg="#007acc", fg="white", bd=0, width=3)
+        btn_g.pack(side="left", padx=1)
+        
+        self.pan_start_x = 0
+        self.pan_start_y = 0
 
-        self.context_menu = tk.Menu(self.parent, tearoff=0, bg="#2d2d30", fg="white")
-        self.context_menu.add_command(label=self.t("z5_ctx_copy"), command=self.action_copy)
-        self.context_menu.add_command(label=self.t("z5_ctx_paste"), command=self.action_paste)
-        self.clipboard = []
+    def set_brut_data(self, data):
+        self.brut_data = data
+        if self.auto_fit_mode: self.fit_to_brut()
+        else: self.redraw()
 
-    def t(self, key):
-        if self.app: return self.app.t(key)
-        return key
+    def set_calculated_lines(self, render_list):
+        self.calculated_lines = render_list
+        self.redraw()
 
-    def refresh_ui(self):
-        for lbl, key in self.header_labels:
-            lbl.config(text=self.t(key))
-        self.lbl_actions.config(text=self.t("z5_col_actions"))
+    def set_highlight(self, layer_name, line_index):
+        """Définit quelle ligne doit être mise en surbrillance"""
+        self.highlight_layer = layer_name
+        self.highlight_index = line_index
+        self.redraw()
+
+    def toggle_grid(self):
+        self.show_grid = not self.show_grid
+        self.redraw()
+        
+    def set_25d_mode(self, active):
+        self.render_mode_25d = active
+        bg_color = "#e0e0e0" if active else "#ffffff"
+        self.canvas.config(bg=bg_color)
+        self.redraw()
+
+    def fit_to_brut(self):
+        if not self.brut_data: return
+        w_c = self.canvas.winfo_width()
+        h_c = self.canvas.winfo_height()
+        if w_c < 10:
+            self.canvas.after(100, self.fit_to_brut)
+            return
         try:
-            self.context_menu.entryconfigure(0, label=self.t("z5_ctx_copy"))
-            self.context_menu.entryconfigure(1, label=self.t("z5_ctx_paste"))
+            d1 = float(self.brut_data.get('dim1', 50))
+            d2 = float(self.brut_data.get('dim2', 50))
+            if d1 > 0 and d2 > 0:
+                self.zoom_level = min((w_c * 0.8) / d1, (h_c * 0.8) / d2)
+                self.offset_x, self.offset_y = 0, 0
+                self.auto_fit_mode = True
+                self.redraw()
         except: pass
-        self.refresh_table()
 
-    def load_data(self, calque_data, color):
-        if not calque_data: return
-        self.current_calque_global = calque_data.get("global", {})
-        self.current_calque_lines = calque_data.get("lines", [])
-        self.current_calque_color = color
-        self.refresh_table()
+    def on_resize(self, event):
+        if self.auto_fit_mode: self.fit_to_brut()
+        else: self.redraw()
 
-    def refresh_table(self):
-        for row in self.rows: row.destroy()
-        self.rows = []
-        if not self.current_calque_lines: return
-        max_idx = len(self.current_calque_lines) - 1
-        self.selected_indices = {i for i in self.selected_indices if i <= max_idx}
-        
-        for i, line_dict in enumerate(self.current_calque_lines):
-            # ON AFFICHE TOUT, même si deleted (mais en grisé)
-            row = LigneRow(self.list_frame, self, i, line_dict, self.current_calque_global, self.current_calque_color)
-            row.pack(fill="x", pady=0)
-            self.rows.append(row)
-            is_selected = (i in self.selected_indices)
-            is_editing = (i == self.editing_index)
-            row.set_selected(is_selected or is_editing, is_editing_mode=is_editing)
+    def reset_view_to_fit(self):
+        self.auto_fit_mode = True
+        self.fit_to_brut()
 
-    def trigger_redraw(self):
-        if self.app and hasattr(self.app, 'trigger_calculation'):
-            self.app.trigger_calculation()
+    def start_pan(self, event):
+        self.auto_fit_mode = False
+        self.pan_start_x, self.pan_start_y = event.x, event.y
 
-    def highlight_row_only(self, index):
-        self.selected_indices = {index}
-        self.editing_index = None
-        self.update_visual_selection()
-        if self.on_line_select_callback:
-            line_data = self.current_calque_lines[index]
-            merged = self.current_calque_global.copy()
-            merged.update(line_data.get("override", {}))
-            self.on_line_select_callback(index, merged)
+    def do_pan(self, event):
+        self.auto_fit_mode = False
+        self.offset_x += event.x - self.pan_start_x
+        self.offset_y += event.y - self.pan_start_y
+        self.pan_start_x, self.pan_start_y = event.x, event.y
+        self.redraw()
 
-    def select_row_for_editing(self, index):
-        self.selected_indices = {index}
-        self.editing_index = index
-        self.update_visual_selection()
-        self.notify_main_edit()
+    def do_zoom(self, event, factor=None):
+        self.auto_fit_mode = False
+        scale = 1.1 if (factor > 0 if factor else event.delta > 0) else 0.9
+        self.zoom_level = max(0.01, min(500.0, self.zoom_level * scale))
+        self.redraw()
 
-    def toggle_selection(self, index):
-        if index in self.selected_indices: self.selected_indices.remove(index)
-        else: self.selected_indices.add(index)
-        self.update_visual_selection()
-        
-    def deselect_all(self, event=None):
-        self.selected_indices = set()
-        self.editing_index = None
-        self.update_visual_selection()
-        if self.on_line_select_callback: self.on_line_select_callback(None, self.current_calque_global)
+    def to_screen_x(self, x):
+        return self.canvas.winfo_width() / 2 + x * self.zoom_level + self.offset_x
 
-    def update_visual_selection(self):
-        for row in self.rows:
-            is_sel = row.index in self.selected_indices
-            is_edit = row.index == self.editing_index
-            row.set_selected(is_sel or is_edit, is_editing_mode=is_edit)
-            if not is_sel and not is_edit:
-                row.on_leave()
+    def to_screen_y(self, y):
+        return self.canvas.winfo_height() / 2 - y * self.zoom_level + self.offset_y
 
-    def notify_main_edit(self):
-        if self.editing_index is not None and self.on_line_select_callback:
-            line_data = self.current_calque_lines[self.editing_index]
-            merged = self.current_calque_global.copy()
-            merged.update(line_data.get("override", {}))
-            self.on_line_select_callback(self.editing_index, merged)
+    def _get_rounded_rect_points(self, cx, cy, w, h, r):
+        pts = []
+        r = min(r, w/2, h/2)
+        if r <= 0: return [] 
+        left, right = cx - w/2, cx + w/2
+        top, bottom = cy - h/2, cy + h/2
+        steps = 12 
+        # TR, BR, BL, TL ...
+        corners = [
+            ((right-r, top+r), -math.pi/2, 0),
+            ((right-r, bottom-r), 0, math.pi/2),
+            ((left+r, bottom-r), math.pi/2, math.pi),
+            ((left+r, top+r), math.pi, 3*math.pi/2)
+        ]
+        for c_pt, start, end in corners:
+            for i in range(steps + 1):
+                ang = start + (end - start) * i / steps
+                pts.extend([c_pt[0] + r * math.cos(ang), c_pt[1] + r * math.sin(ang)])
+        pts.extend([pts[0], pts[1]])
+        return pts
+
+    def redraw(self, event=None):
+        self.canvas.delete("all")
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+
+        if self.show_grid: self.draw_grid(w, h)
+        if self.brut_data: self.draw_brut()
+
+        for obj in self.calculated_lines:
+            pts = obj.get("points", [])
+            if len(pts) < 2: continue
             
-    def show_context_menu(self, event):
-        state = "normal" if self.clipboard else "disabled"
-        try: self.context_menu.entryconfigure(1, state=state)
-        except: pass
-        self.context_menu.tk_popup(event.x_root, event.y_root)
-        
-    def action_copy(self):
-        self.clipboard = []
-        for idx in sorted(list(self.selected_indices)): self.clipboard.append(self.current_calque_lines[idx])
-        
-    def action_paste(self):
-        if not self.clipboard: return
-        insert_after = max(self.selected_indices) if self.selected_indices else len(self.current_calque_lines) - 1
-        if self.on_paste_callback: self.on_paste_callback(insert_after, self.clipboard)
-        
-    def delete_line(self, index):
-        if self.on_delete_callback: self.on_delete_callback(index)
+            # Paramètres de base
+            base_col = obj.get("color", "black")
+            base_thick = float(obj.get("thickness", 1.0))
+            
+            # --- LOGIQUE SURBRILLANCE (Zone 5 -> Canvas) ---
+            is_highlighted = False
+            if self.highlight_layer is not None and self.highlight_index is not None:
+                if obj.get("layer_name") == self.highlight_layer and obj.get("line_index") == self.highlight_index:
+                    is_highlighted = True
+            
+            # Si surbrillance : Orange + plus large
+            if is_highlighted:
+                base_col = "#ffae00"  # Orange vif
+                base_thick = max(2.5, base_thick + 2.0)
 
-    def refresh_needed(self):
-        self.refresh_table()
-        if self.editing_index is not None: self.notify_main_edit()
+            scr_pts = []
+            for px, py in pts:
+                scr_pts.extend([self.to_screen_x(px), self.to_screen_y(py)])
+            
+            if self.render_mode_25d:
+                # En mode 2.5D, on garde le gris pour les flancs, mais on peut colorer le fond
+                flanc_width = max(2.0, base_thick * 4)
+                self.canvas.create_line(scr_pts, fill="#888888", width=flanc_width, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+                
+                fond_col = base_col # Le fond prend la couleur (Orange si sélectionné)
+                self.canvas.create_line(scr_pts, fill=fond_col, width=1.0, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+            else:
+                try:
+                    self.canvas.create_line(scr_pts, fill=base_col, width=base_thick, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+                except: pass
+
+    def draw_brut(self):
+        cx, cy = self.to_screen_x(0), self.to_screen_y(0)
+        try:
+            d1 = float(self.brut_data.get('dim1', 50)) * self.zoom_level
+            d2 = float(self.brut_data.get('dim2', 50)) * self.zoom_level
+            style = {"fill": "", "outline": "#ff4444", "width": 2, "dash": (4, 4)}
+            
+            if "type_index" in self.brut_data:
+                is_circle = (self.brut_data["type_index"] == 0)
+            else:
+                brut_type = str(self.brut_data.get('type', 'Cercle'))
+                is_circle = ("Cercle" in brut_type) or ("Circle" in brut_type)
+
+            if is_circle:
+                self.canvas.create_oval(cx - d1/2, cy - d2/2, cx + d1/2, cy + d2/2, **style)
+            else:
+                radius = float(self.brut_data.get("radius", 0.0)) * self.zoom_level
+                if radius > 0.5:
+                    pts = self._get_rounded_rect_points(cx, cy, d1, d2, radius)
+                    if pts: self.canvas.create_line(pts, fill="#ff4444", width=2, dash=(4, 4))
+                    else: self.canvas.create_rectangle(cx - d1/2, cy - d2/2, cx + d1/2, cy + d2/2, **style)
+                else:
+                    self.canvas.create_rectangle(cx - d1/2, cy - d2/2, cx + d1/2, cy + d2/2, **style)
+        except: pass
+
+    def draw_grid(self, w, h):
+        cx, cy = self.to_screen_x(0), self.to_screen_y(0)
+        steps = [0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0]
+        step_mm = steps[-1]
+        for s in steps:
+            if s * self.zoom_level >= 20:
+                step_mm = s
+                break
+        px_step = step_mm * self.zoom_level
+
+        start_k = math.floor((0 - cx) / px_step)
+        end_k   = math.ceil((w - cx) / px_step)
+        for k in range(start_k, end_k + 1):
+            x = cx + k * px_step
+            if k == 0: continue
+            is_major = (abs(k) % 5 == 0) if step_mm >= 10 else (round(k * step_mm) % (step_mm * 5) == 0)
+            self.canvas.create_line(x, 0, x, h, fill="#dddddd" if is_major else "#f5f5f5")
+
+        start_k = math.floor((cy - h) / px_step)
+        end_k   = math.ceil((cy - 0) / px_step)
+        for k in range(start_k, end_k + 1):
+            y = cy - k * px_step
+            if k == 0: continue
+            is_major = (abs(k) % 5 == 0) if step_mm >= 10 else (round(k * step_mm) % (step_mm * 5) == 0)
+            self.canvas.create_line(0, y, w, y, fill="#dddddd" if is_major else "#f5f5f5")
+
+        self.canvas.create_line(0, cy, w, cy, fill="#ffcccc", width=1)
+        self.canvas.create_line(cx, 0, cx, h, fill="#ffcccc", width=1)
+        self.canvas.create_line(0, cy, w, cy, fill="#cc0000", width=1, dash=(8, 4))
+        self.canvas.create_line(cx, 0, cx, h, fill="#cc0000", width=1, dash=(8, 4))
