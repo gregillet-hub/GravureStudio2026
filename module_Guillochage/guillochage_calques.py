@@ -35,7 +35,6 @@ class CalqueRow(tk.Frame):
         self.name = name
         self.color = color 
         
-        # Données par défaut ou chargées
         if data:
             self.data = data
         else:
@@ -78,38 +77,53 @@ class CalqueRow(tk.Frame):
         try: nb = int(self.data["global"]["nb_lines"])
         except: nb = 1
         current_lines = self.data["lines"]
-        new_lines = []
-        for i in range(nb):
-            if i < len(current_lines): 
-                current_lines[i]["id"] = i + 1
-                new_lines.append(current_lines[i])
-            else: 
-                new_lines.append({"id": i + 1, "is_active": True, "override": {}})
-        self.data["lines"] = new_lines
+        
+        # On ajuste la taille de la liste pour matcher le nombre global
+        # MAIS on respecte les flags 'is_deleted' s'ils existent déjà
+        
+        # 1. Si on a moins de lignes que demandé, on ajoute
+        while len(current_lines) < nb:
+            current_lines.append({"id": len(current_lines) + 1, "is_active": True, "is_deleted": False, "override": {}})
+            
+        # 2. Si on a plus de lignes (parce qu'on a réduit le nb global), on coupe la fin
+        # Attention : cela supprime définitivement les lignes en trop à la fin
+        if len(current_lines) > nb:
+            self.data["lines"] = current_lines[:nb]
+
+        # Mise à jour des IDs pour être propre
+        for i, line in enumerate(self.data["lines"]):
+            line["id"] = i + 1
 
     def update_params_from_zone4(self, new_params, target_line_index=None):
         if self.is_locked: return
 
         if target_line_index is None:
             self.data["global"].update(new_params)
-            self.regenerate_lines()
+            # Si le nombre de lignes global change, on régénère la structure
+            if "nb_lines" in new_params:
+                self.regenerate_lines()
         else:
             if target_line_index < len(self.data["lines"]):
                 line_data = self.data["lines"][target_line_index]
                 override = line_data.get("override", {})
                 global_data = self.data["global"]
                 for key, value in new_params.items():
+                    # On ne stocke dans l'override que ce qui diffère du global
                     if value != global_data.get(key): override[key] = value
                     else: 
                         if key in override: del override[key]
                 self.data["lines"][target_line_index]["override"] = override
 
     def delete_line_at(self, index):
+        """
+        Supprime la ligne SANS changer l'indexation des autres.
+        La ligne devient un 'fantôme' pour conserver l'équidistance.
+        """
         if self.is_locked: return 
         if 0 <= index < len(self.data["lines"]):
-            del self.data["lines"][index]
-            self.data["global"]["nb_lines"] = float(len(self.data["lines"]))
-            for i, line in enumerate(self.data["lines"]): line["id"] = i + 1
+            # Au lieu de 'del', on marque comme supprimée
+            self.data["lines"][index]["is_deleted"] = True
+            self.data["lines"][index]["is_active"] = False # Sécurité
 
     def insert_lines_at(self, index, lines_to_insert):
         if self.is_locked: return 
@@ -119,8 +133,10 @@ class CalqueRow(tk.Frame):
             import copy
             new_line = copy.deepcopy(line)
             new_line["id"] = 0
+            new_line["is_deleted"] = False # On la ressuscite si c'est une copie
             copies.append(new_line)
         self.data["lines"][insert_pos:insert_pos] = copies
+        # Ici on doit mettre à jour le compteur global car on a physiquement ajouté des lignes
         self.data["global"]["nb_lines"] = float(len(self.data["lines"]))
         for i, line in enumerate(self.data["lines"]): line["id"] = i + 1
 
@@ -280,30 +296,22 @@ class CalquesPanel:
                 self.refresh_view()
                 self.notify_change()
                 
-    # --- MIROIR HORIZONTAL (Basculement flag) ---
     def action_mirror_h(self): 
         if self.selected_row:
             if self.selected_row.is_locked: return 
             import copy
             new_data = copy.deepcopy(self.selected_row.data)
-            
-            # On inverse simplement le flag miroir H pour le nouveau calque
             val = new_data["global"].get("mirror_h", False)
             new_data["global"]["mirror_h"] = not val
-            
             self.add_calque_row(f"{self.selected_row.var_name.get()} (Mir H)", data=new_data)
 
-    # --- MIROIR VERTICAL (Basculement flag) ---
     def action_mirror_v(self):
         if self.selected_row:
             if self.selected_row.is_locked: return
             import copy
             new_data = copy.deepcopy(self.selected_row.data)
-            
-            # On inverse le flag miroir V
             val = new_data["global"].get("mirror_v", False)
             new_data["global"]["mirror_v"] = not val
-            
             self.add_calque_row(f"{self.selected_row.var_name.get()} (Mir V)", data=new_data)
 
     def action_rotate(self):
