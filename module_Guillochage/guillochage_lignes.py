@@ -1,7 +1,6 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk
-
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
@@ -46,98 +45,129 @@ class LigneRow(tk.Frame):
         self.index = index
         self.line_dict = line_dict
         
+        # État Supprimé (Corbeille)
+        self.is_deleted = line_dict.get("is_deleted", False)
+
+        # Fusion pour affichage des valeurs réelles
         self.final_params = global_params.copy()
         self.final_params.update(line_dict.get("override", {}))
+        
+        # État "Surchargé" (Override) - La ligne est-elle modifiée ?
         self.has_override = bool(line_dict.get("override"))
-        self.default_fg = "#ffae00" if self.has_override else "#d4d4d4" 
+        
+        # --- Gestion des couleurs (Gris si supprimé, Normal sinon) ---
+        if self.is_deleted:
+            self.default_fg = "#666666" 
+            self.bg_color = "#222222"
+        else:
+            self.default_fg = "#ffae00" if self.has_override else "#d4d4d4"
+            self.bg_color = "#2d2d30"
+
+        self.config(bg=self.bg_color)
         
         self.elements = []
         
+        # 1. CheckBox Active/Inactive
         self.var_active = tk.BooleanVar(value=line_dict.get("is_active", True))
-        self.chk = tk.Checkbutton(self, variable=self.var_active, bg="#2d2d30", activebackground="#2d2d30", selectcolor="#2d2d30", bd=0, command=self.on_toggle_active)
+        self.chk = tk.Checkbutton(self, variable=self.var_active, bg=self.bg_color, activebackground=self.bg_color, selectcolor="#2d2d30", bd=0, command=self.on_toggle_active)
         self.chk.grid(row=0, column=0, sticky="w", padx=(5, 2))
+        # Si supprimé, on désactive la checkbox (la ligne n'existe plus virtuellement)
+        if self.is_deleted: self.chk.config(state="disabled")
         self.elements.append(self.chk)
 
-        self.lbl_idx = tk.Label(self, text=f"{index + 1:02d}", fg=self.default_fg, bg="#2d2d30", width=3, font=("Segoe UI", 9, "bold" if self.has_override else "normal"))
+        # 2. ID (Numéro de ligne)
+        # Style barré si supprimé
+        font_style = ("Segoe UI", 9, "bold" if self.has_override else "normal")
+        if self.is_deleted: font_style = ("Segoe UI", 9, "overstrike")
+        
+        self.lbl_idx = tk.Label(self, text=f"{index + 1:02d}", fg=self.default_fg, bg=self.bg_color, width=3, font=font_style)
         self.lbl_idx.grid(row=0, column=1, sticky="w")
         self.elements.append(self.lbl_idx)
 
-        self.canvas_color = tk.Canvas(self, width=14, height=14, bg="#2d2d30", highlightthickness=0)
-        self.canvas_color.create_rectangle(1, 1, 13, 13, fill=calque_color, outline="#555")
+        # 3. Indicateur Couleur Calque
+        self.canvas_color = tk.Canvas(self, width=14, height=14, bg=self.bg_color, highlightthickness=0)
+        if not self.is_deleted:
+            self.canvas_color.create_rectangle(1, 1, 13, 13, fill=calque_color, outline="#555")
         self.canvas_color.grid(row=0, column=2, padx=5)
         self.elements.append(self.canvas_color)
 
+        # 4. Colonnes de données (Texte)
         current_col = 3
         for key, title_key, weight, fmt in COL_CONFIG:
             raw_val = self.final_params.get(key, 0)
-            
-            # Formatage de base
             if callable(fmt): val_str = fmt(raw_val)
             elif isinstance(fmt, str): val_str = fmt.format(float(raw_val)) if isinstance(raw_val, (int, float)) else str(raw_val)
             else: val_str = str(raw_val)
             
-            # --- LOGIQUE DE TRADUCTION POUR LES TYPES ---
+            # Traduction Noms Fichiers
             if key == "wave_type" or key == "traj_type":
-                # Nettoyage du nom de fichier interne
                 base_name = str(raw_val).replace(".py", "")
                 if base_name.startswith("traj_"): base_name = base_name[5:]
                 if base_name.startswith("onde_"): base_name = base_name[5:]
-                
-                # Construction de la clé de traduction
                 trans_key = "file_" + base_name.lower()
                 translated = self.manager.t(trans_key)
-                
-                # Si une traduction existe (différente de la clé), on l'utilise
-                if translated != trans_key:
-                    val_str = translated
-                else:
-                    # Sinon affichage propre du nom de fichier
-                    val_str = base_name.replace("_", " ").title()
+                if translated != trans_key: val_str = translated
+                else: val_str = base_name.replace("_", " ").title()
             
-            # --- TRADUCTION POUR LA RESOLUTION ---
+            # Traduction Résolution
             if key == "resolution":
-                # Mapping simple pour la résolution si c'est un texte standard
-                # Les valeurs internes sont : Faible (Rapide), Moyenne, Haute, Ultra (Export)
                 res_map = {
-                    "Faible (Rapide)": "z4_val_res_low",
-                    "Moyenne": "z4_val_res_med",
-                    "Haute": "z4_val_res_high",
-                    "Ultra (Export)": "z4_val_res_ultra"
+                    "Faible (Rapide)": "z4_val_res_low", "Moyenne": "z4_val_res_med",
+                    "Haute": "z4_val_res_high", "Ultra (Export)": "z4_val_res_ultra"
                 }
-                if val_str in res_map:
-                    val_str = self.manager.t(res_map[val_str])
+                if val_str in res_map: val_str = self.manager.t(res_map[val_str])
 
-            l = tk.Label(self, text=val_str, fg="#969696", bg="#2d2d30", anchor="c", font=("Segoe UI", 9))
+            if self.is_deleted: val_str = "---"
+
+            l = tk.Label(self, text=val_str, fg="#666" if self.is_deleted else "#969696", bg=self.bg_color, anchor="c", font=("Segoe UI", 9))
             l.grid(row=0, column=current_col, sticky="ew", padx=1)
             self.columnconfigure(current_col, weight=weight)
             self.elements.append(l)
             l.bind("<Button-1>", self.on_simple_click)
             current_col += 1
 
-        self.frame_actions = tk.Frame(self, bg="#2d2d30")
+        # 5. Actions (Boutons à droite)
+        self.frame_actions = tk.Frame(self, bg=self.bg_color)
         self.frame_actions.grid(row=0, column=99, sticky="e", padx=(5, 10))
         self.columnconfigure(99, weight=0)
         self.elements.append(self.frame_actions)
         
+        # Bouton Éditer (Crayon)
         btn_edit = tk.Button(self.frame_actions, text="✎", command=self.on_edit_click, bg="#3e3e42", fg="white", bd=0, width=3, cursor="hand2")
         btn_edit.pack(side="left", padx=2)
+        if self.is_deleted: btn_edit.config(state="disabled", bg="#222")
         ToolTip(btn_edit, self.manager.t("z5_act_edit"))
         
-        if self.has_override:
-            btn_reset = tk.Button(self.frame_actions, text="⟲", command=self.on_reset, bg="#3e3e42", fg="#d4d4d4", bd=0, width=3, cursor="hand2")
-            btn_reset.pack(side="left", padx=2)
-            ToolTip(btn_reset, self.manager.t("z5_act_reset"))
-        else:
-            tk.Frame(self.frame_actions, bg="#2d2d30", width=25, height=1).pack(side="left")
+        # Bouton Reset (Actif si Override OU si Supprimé)
+        # Permet de restaurer une ligne supprimée ou de remettre à zéro une ligne modifiée
+        can_reset = self.has_override or self.is_deleted
+        state_reset = "normal" if can_reset else "disabled"
+        fg_reset = "white" if can_reset else "#555"
+        
+        self.btn_reset = tk.Button(self.frame_actions, text="⟲", command=self.on_reset, state=state_reset, bg="#3e3e42", fg=fg_reset, bd=0, width=3, cursor="hand2")
+        self.btn_reset.pack(side="left", padx=2)
+        ToolTip(self.btn_reset, self.manager.t("z5_act_reset"))
 
-        btn_del = tk.Button(self.frame_actions, text="🗑️", command=self.on_delete, bg="#3e3e42", fg="#f48771", bd=0, width=3, cursor="hand2")
+        # Bouton Supprimer / Restaurer
+        # Si supprimé -> Icone Recycler (Vert), sinon Poubelle (Rouge)
+        icon_del = "♻" if self.is_deleted else "🗑️"
+        fg_del = "#4CAF50" if self.is_deleted else "#f48771"
+        tooltip_del = "Restaurer" if self.is_deleted else self.manager.t("z5_act_del")
+        
+        btn_del = tk.Button(self.frame_actions, text=icon_del, command=self.on_toggle_delete, bg="#3e3e42", fg=fg_del, bd=0, width=3, cursor="hand2")
         btn_del.pack(side="left", padx=2)
-        ToolTip(btn_del, self.manager.t("z5_act_del"))
+        ToolTip(btn_del, tooltip_del)
 
-        for w in [self, self.lbl_idx, self.chk]:
-            w.bind("<Button-1>", self.on_simple_click)
-            w.bind("<Control-Button-1>", self.on_multi_select)
-            w.bind("<Button-3>", self.on_right_click)
+        # --- BINDINGS UNIVERSELS (Clic partout = Sélection) ---
+        all_widgets = [self, self.lbl_idx, self.canvas_color, self.frame_actions] + self.elements
+        for w in all_widgets:
+            # IMPORTANT: On EXCLUT la Checkbox et les Boutons du clic de sélection global
+            # pour éviter qu'ils ne soient "bloqués" ou qu'ils déclenchent la sélection au lieu de leur action.
+            if isinstance(w, (tk.Button, tk.Checkbutton)): continue
+            
+            w.bind("<Button-1>", self.on_simple_click, add="+")
+            w.bind("<Control-Button-1>", self.on_multi_select, add="+")
+            w.bind("<Button-3>", self.on_right_click, add="+")
             
         self.bind("<Enter>", self.on_enter)
         self.bind("<Leave>", self.on_leave)
@@ -148,11 +178,11 @@ class LigneRow(tk.Frame):
 
     def on_enter(self, event=None):
         if self.index not in self.manager.selected_indices and self.index != self.manager.editing_index:
-            self.configure_bg("#2a2d3e")
+            self.configure_bg("#353538" if not self.is_deleted else "#2a2a2a")
 
     def on_leave(self, event=None):
         if self.index not in self.manager.selected_indices and self.index != self.manager.editing_index:
-            self.configure_bg("#2d2d30")
+            self.configure_bg(self.bg_color)
 
     def configure_bg(self, color):
         self.config(bg=color)
@@ -161,8 +191,13 @@ class LigneRow(tk.Frame):
             elif isinstance(w, tk.Checkbutton): w.config(bg=color, activebackground=color)
             elif isinstance(w, tk.Frame) or isinstance(w, tk.Canvas): w.config(bg=color)
 
-    def on_simple_click(self, event=None): self.manager.highlight_row_only(self.index)
-    def on_edit_click(self): self.manager.select_row_for_editing(self.index)
+    def on_simple_click(self, event=None): 
+        self.manager.highlight_row_only(self.index)
+        
+    def on_edit_click(self): 
+        if self.is_deleted: return
+        self.manager.select_row_for_editing(self.index)
+        
     def on_multi_select(self, event=None): self.manager.toggle_selection(self.index)
     
     def on_right_click(self, event=None):
@@ -171,17 +206,31 @@ class LigneRow(tk.Frame):
         self.manager.show_context_menu(event)
 
     def on_reset(self):
+        # Reset total : On enlève les overrides ET on restaure si supprimé
         self.line_dict["override"] = {}
+        self.line_dict["is_deleted"] = False
         self.manager.refresh_needed()
-    def on_delete(self): self.manager.delete_line(self.index)
-    def on_toggle_active(self): self.line_dict["is_active"] = self.var_active.get()
+        self.manager.trigger_redraw()
+
+    def on_toggle_delete(self): 
+        # Bascule Supprimé / Actif
+        # Si on supprime, on passe is_deleted à True -> Le moteur l'ignorera (trou visuel)
+        # Si on restaure, on passe is_deleted à False -> Le moteur la dessinera
+        self.line_dict["is_deleted"] = not self.is_deleted
+        self.manager.refresh_needed()
+        self.manager.trigger_redraw()
+
+    def on_toggle_active(self): 
+        # Checkbox activée/désactivée
+        self.line_dict["is_active"] = self.var_active.get()
+        self.manager.trigger_redraw()
 
     def set_selected(self, state, is_editing_mode=False):
         if is_editing_mode: bg = "#007acc"
         elif state: bg = "#444444"
-        else: bg = "#2d2d30"
+        else: bg = self.bg_color
         
-        fg_normal = "white" if state else "#969696"
+        fg_normal = "white" if state else ("#666" if self.is_deleted else "#969696")
         fg_special = "white" if state else self.default_fg
         
         self.config(bg=bg)
@@ -225,6 +274,9 @@ class LignesPanel:
             self.header_labels.append((lbl, title_key))
             col_idx += 1
             
+        self.btn_back_calque = tk.Button(self.header, text="Retour Calque", command=self.deselect_all, bg="#444", fg="white", bd=0, font=("Segoe UI", 8), padx=5)
+        self.btn_back_calque.grid(row=0, column=98, sticky="e", padx=5)
+
         self.lbl_actions = tk.Label(self.header, text=self.t("z5_col_actions"), bg="#333333", fg="#007acc", width=12, font=("Segoe UI", 9, "bold"), anchor="e")
         self.lbl_actions.grid(row=0, column=99, sticky="e", padx=10)
         self.header.columnconfigure(99, weight=0)
@@ -280,8 +332,9 @@ class LignesPanel:
         if not self.current_calque_lines: return
         max_idx = len(self.current_calque_lines) - 1
         self.selected_indices = {i for i in self.selected_indices if i <= max_idx}
-        if self.editing_index is not None and self.editing_index > max_idx: self.editing_index = None
+        
         for i, line_dict in enumerate(self.current_calque_lines):
+            # ON AFFICHE TOUT, même si deleted (mais en grisé)
             row = LigneRow(self.list_frame, self, i, line_dict, self.current_calque_global, self.current_calque_color)
             row.pack(fill="x", pady=0)
             self.rows.append(row)
@@ -289,23 +342,37 @@ class LignesPanel:
             is_editing = (i == self.editing_index)
             row.set_selected(is_selected or is_editing, is_editing_mode=is_editing)
 
+    def trigger_redraw(self):
+        if self.app and hasattr(self.app, 'trigger_calculation'):
+            self.app.trigger_calculation()
+
     def highlight_row_only(self, index):
         self.selected_indices = {index}
+        self.editing_index = None
         self.update_visual_selection()
+        if self.on_line_select_callback:
+            line_data = self.current_calque_lines[index]
+            merged = self.current_calque_global.copy()
+            merged.update(line_data.get("override", {}))
+            self.on_line_select_callback(index, merged)
+
     def select_row_for_editing(self, index):
         self.selected_indices = {index}
         self.editing_index = index
         self.update_visual_selection()
         self.notify_main_edit()
+
     def toggle_selection(self, index):
         if index in self.selected_indices: self.selected_indices.remove(index)
         else: self.selected_indices.add(index)
         self.update_visual_selection()
+        
     def deselect_all(self, event=None):
         self.selected_indices = set()
         self.editing_index = None
         self.update_visual_selection()
         if self.on_line_select_callback: self.on_line_select_callback(None, self.current_calque_global)
+
     def update_visual_selection(self):
         for row in self.rows:
             is_sel = row.index in self.selected_indices
@@ -338,6 +405,7 @@ class LignesPanel:
         
     def delete_line(self, index):
         if self.on_delete_callback: self.on_delete_callback(index)
+
     def refresh_needed(self):
         self.refresh_table()
         if self.editing_index is not None: self.notify_main_edit()
