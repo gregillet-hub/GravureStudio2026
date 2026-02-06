@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk
+from copy import deepcopy
 
 class ToolTip:
     def __init__(self, widget, text):
@@ -12,12 +13,10 @@ class ToolTip:
     def show_tip(self, event=None):
         if self.tip_window or not self.text: return
         try:
-            # If an event with screen coordinates is provided, use it (more reliable for mouse-hover)
             if event is not None and getattr(event, 'x_root', None) is not None:
                 x = event.x_root + 20
                 y = event.y_root + 10
             else:
-                # Try widget.bbox('insert') for Text/Entry widgets, otherwise fallback to root coordinates
                 try:
                     x, y, _, _ = self.widget.bbox("insert")
                     x = x + self.widget.winfo_rootx() + 25
@@ -32,7 +31,6 @@ class ToolTip:
             label = tk.Label(tw, text=self.text, justify=tk.LEFT, background="#ffffe0", relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 8))
             label.pack(ipadx=1)
         except Exception:
-            # Never let tooltip exceptions break the main UI
             pass
     def hide_tip(self, event=None):
         if self.tip_window:
@@ -59,17 +57,13 @@ class LigneRow(tk.Frame):
         self.index = index
         self.line_dict = line_dict
         
-        # État Supprimé (Corbeille)
         self.is_deleted = line_dict.get("is_deleted", False)
 
-        # Fusion pour affichage des valeurs réelles
         self.final_params = global_params.copy()
         self.final_params.update(line_dict.get("override", {}))
         
-        # État "Surchargé" (Override) - La ligne est-elle modifiée ?
         self.has_override = bool(line_dict.get("override"))
         
-        # --- Gestion des couleurs (Gris si supprimé, Normal sinon) ---
         if self.is_deleted:
             self.default_fg = "#666666" 
             self.bg_color = "#222222"
@@ -81,16 +75,12 @@ class LigneRow(tk.Frame):
         
         self.elements = []
         
-        # 1. CheckBox Active/Inactive
         self.var_active = tk.BooleanVar(value=line_dict.get("is_active", True))
         self.chk = tk.Checkbutton(self, variable=self.var_active, bg=self.bg_color, activebackground=self.bg_color, selectcolor="#2d2d30", bd=0, command=self.on_toggle_active)
         self.chk.grid(row=0, column=0, sticky="w", padx=(5, 2))
-        # Si supprimé, on désactive la checkbox (la ligne n'existe plus virtuellement)
         if self.is_deleted: self.chk.config(state="disabled")
         self.elements.append(self.chk)
 
-        # 2. ID (Numéro de ligne)
-        # Style barré si supprimé
         font_style = ("Segoe UI", 9, "bold" if self.has_override else "normal")
         if self.is_deleted: font_style = ("Segoe UI", 9, "overstrike")
         
@@ -98,14 +88,12 @@ class LigneRow(tk.Frame):
         self.lbl_idx.grid(row=0, column=1, sticky="w")
         self.elements.append(self.lbl_idx)
 
-        # 3. Indicateur Couleur Calque
         self.canvas_color = tk.Canvas(self, width=14, height=14, bg=self.bg_color, highlightthickness=0)
         if not self.is_deleted:
             self.canvas_color.create_rectangle(1, 1, 13, 13, fill=calque_color, outline="#555")
         self.canvas_color.grid(row=0, column=2, padx=5)
         self.elements.append(self.canvas_color)
 
-        # 4. Colonnes de données (Texte)
         current_col = 3
         for key, title_key, weight, fmt in COL_CONFIG:
             raw_val = self.final_params.get(key, 0)
@@ -113,7 +101,6 @@ class LigneRow(tk.Frame):
             elif isinstance(fmt, str): val_str = fmt.format(float(raw_val)) if isinstance(raw_val, (int, float)) else str(raw_val)
             else: val_str = str(raw_val)
             
-            # Traduction Noms Fichiers
             if key == "wave_type" or key == "traj_type":
                 base_name = str(raw_val).replace(".py", "")
                 if base_name.startswith("traj_"): base_name = base_name[5:]
@@ -123,7 +110,6 @@ class LigneRow(tk.Frame):
                 if translated != trans_key: val_str = translated
                 else: val_str = base_name.replace("_", " ").title()
             
-            # Traduction Résolution
             if key == "resolution":
                 res_map = {
                     "Faible (Rapide)": "z4_val_res_low", "Moyenne": "z4_val_res_med",
@@ -133,27 +119,23 @@ class LigneRow(tk.Frame):
 
             if self.is_deleted: val_str = "---"
 
-            l = tk.Label(self, text=val_str, fg="#666" if self.is_deleted else "#969696", bg=self.bg_color, anchor="c", font=("Segoe UI", 9))
+            l = tk.Label(self, text=val_str, fg="#666" if self.is_deleted else="#969696", bg=self.bg_color, anchor="c", font=("Segoe UI", 9))
             l.grid(row=0, column=current_col, sticky="ew", padx=1)
             self.columnconfigure(current_col, weight=weight)
             self.elements.append(l)
             l.bind("<Button-1>", self.on_simple_click)
             current_col += 1
 
-        # 5. Actions (Boutons à droite)
         self.frame_actions = tk.Frame(self, bg=self.bg_color)
         self.frame_actions.grid(row=0, column=99, sticky="e", padx=(5, 10))
         self.columnconfigure(99, weight=0)
         self.elements.append(self.frame_actions)
         
-        # Bouton Éditer (Crayon)
         btn_edit = tk.Button(self.frame_actions, text="✎", command=self.on_edit_click, bg="#3e3e42", fg="white", bd=0, width=3, cursor="hand2")
         btn_edit.pack(side="left", padx=2)
         if self.is_deleted: btn_edit.config(state="disabled", bg="#222")
         ToolTip(btn_edit, self.manager.t("z5_act_edit"))
         
-        # Bouton Reset (Actif si Override OU si Supprimé)
-        # Permet de restaurer une ligne supprimée ou de remettre à zéro une ligne modifiée
         can_reset = self.has_override or self.is_deleted
         state_reset = "normal" if can_reset else "disabled"
         fg_reset = "white" if can_reset else "#555"
@@ -162,8 +144,6 @@ class LigneRow(tk.Frame):
         self.btn_reset.pack(side="left", padx=2)
         ToolTip(self.btn_reset, self.manager.t("z5_act_reset"))
 
-        # Bouton Supprimer / Restaurer
-        # Si supprimé -> Icone Recycler (Vert), sinon Poubelle (Rouge)
         icon_del = "♻" if self.is_deleted else "🗑️"
         fg_del = "#4CAF50" if self.is_deleted else "#f48771"
         tooltip_del = "Restaurer" if self.is_deleted else self.manager.t("z5_act_del")
@@ -172,13 +152,9 @@ class LigneRow(tk.Frame):
         btn_del.pack(side="left", padx=2)
         ToolTip(btn_del, tooltip_del)
 
-        # --- BINDINGS UNIVERSELS (Clic partout = Sélection) ---
         all_widgets = [self, self.lbl_idx, self.canvas_color, self.frame_actions] + self.elements
         for w in all_widgets:
-            # IMPORTANT: On EXCLUT la Checkbox et les Boutons du clic de sélection global
-            # pour éviter qu'ils ne soient "bloqués" ou qu'ils déclenchent la sélection au lieu de leur action.
             if isinstance(w, (tk.Button, tk.Checkbutton)): continue
-            
             w.bind("<Button-1>", self.on_simple_click, add="+")
             w.bind("<Control-Button-1>", self.on_multi_select, add="+")
             w.bind("<Button-3>", self.on_right_click, add="+")
@@ -208,34 +184,43 @@ class LigneRow(tk.Frame):
     def on_simple_click(self, event=None): 
         self.manager.highlight_row_only(self.index)
         
-def on_edit_click(self): 
+    def on_edit_click(self): 
         if self.is_deleted: return
         self.manager.select_row_for_editing(self.index)
         
-def on_multi_select(self, event=None): self.manager.toggle_selection(self.index)
+    def on_multi_select(self, event=None): self.manager.toggle_selection(self.index)
         
-def on_right_click(self, event=None):
+    def on_right_click(self, event=None):
         if self.index not in self.manager.selected_indices:
             self.manager.highlight_row_only(self.index)
         self.manager.show_context_menu(event)
 
     def on_reset(self):
-        # Reset total : On enlève les overrides ET on restaure si supprimé
         self.line_dict["override"] = {}
         self.line_dict["is_deleted"] = False
+        self.is_deleted = False
+        try:
+            self.chk.config(state="normal")
+        except Exception:
+            pass
         self.manager.refresh_needed()
         self.manager.trigger_redraw()
 
     def on_toggle_delete(self): 
-        # Bascule Supprimé / Actif
-        # Si on supprime, on passe is_deleted à True -> Le moteur l'ignorera (trou visuel)
-        # Si on restaure, on passe is_deleted à False -> Le moteur la dessinera
-        self.line_dict["is_deleted"] = not self.is_deleted
+        new_val = not self.line_dict.get("is_deleted", False)
+        self.line_dict["is_deleted"] = new_val
+        self.is_deleted = new_val
+        try:
+            if self.is_deleted:
+                self.chk.config(state="disabled")
+            else:
+                self.chk.config(state="normal")
+        except Exception:
+            pass
         self.manager.refresh_needed()
         self.manager.trigger_redraw()
 
     def on_toggle_active(self): 
-        # Checkbox activée/désactivée
         self.line_dict["is_active"] = self.var_active.get()
         self.manager.trigger_redraw()
 
@@ -302,22 +287,22 @@ class LignesPanel:
         self.window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
         
 def on_canvas_configure(event):
-            self.canvas.itemconfig(self.window_id, width=event.width)
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        self.canvas.bind("<Configure>", on_canvas_configure)
-        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        self.list_frame.bind("<Button-1>", self.deselect_all)
-        self.canvas.bind("<Button-1>", self.deselect_all)
-        
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
+                self.canvas.itemconfig(self.window_id, width=event.width)
+                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            self.canvas.bind("<Configure>", on_canvas_configure)
+            self.list_frame.bind("<Configure", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+            self.canvas.configure(yscrollcommand=self.scrollbar.set)
+            
+            self.list_frame.bind("<Button-1>", self.deselect_all)
+            self.canvas.bind("<Button-1>", self.deselect_all)
+            
+            self.canvas.pack(side="left", fill="both", expand=True)
+            self.scrollbar.pack(side="right", fill="y")
 
-        self.context_menu = tk.Menu(self.parent, tearoff=0, bg="#2d2d30", fg="white")
-        self.context_menu.add_command(label=self.t("z5_ctx_copy"), command=self.action_copy)
-        self.context_menu.add_command(label=self.t("z5_ctx_paste"), command=self.action_paste)
-        self.clipboard = []
+            self.context_menu = tk.Menu(self.parent, tearoff=0, bg="#2d2d30", fg="white")
+            self.context_menu.add_command(label=self.t("z5_ctx_copy"), command=self.action_copy)
+            self.context_menu.add_command(label=self.t("z5_ctx_paste"), command=self.action_paste)
+            self.clipboard = []
 
     def t(self, key):
         if self.app: return self.app.t(key)
@@ -348,7 +333,6 @@ def on_canvas_configure(event):
         self.selected_indices = {i for i in self.selected_indices if i <= max_idx}
         
         for i, line_dict in enumerate(self.current_calque_lines):
-            # ON AFFICHE TOUT, même si deleted (mais en grisé)
             row = LigneRow(self.list_frame, self, i, line_dict, self.current_calque_global, self.current_calque_color)
             row.pack(fill="x", pady=0)
             self.rows.append(row)
@@ -361,6 +345,10 @@ def on_canvas_configure(event):
             self.app.trigger_calculation()
 
     def highlight_row_only(self, index):
+        if not isinstance(index, int):
+            return
+        if index < 0 or index >= len(self.current_calque_lines):
+            return
         self.selected_indices = {index}
         self.editing_index = None
         self.update_visual_selection()
@@ -371,6 +359,10 @@ def on_canvas_configure(event):
             self.on_line_select_callback(index, merged)
 
     def select_row_for_editing(self, index):
+        if not isinstance(index, int):
+            return
+        if index < 0 or index >= len(self.current_calque_lines):
+            return
         self.selected_indices = {index}
         self.editing_index = index
         self.update_visual_selection()
@@ -381,7 +373,7 @@ def on_canvas_configure(event):
         else: self.selected_indices.add(index)
         self.update_visual_selection()
         
-def deselect_all(self, event=None):
+    def deselect_all(self, event=None):
         self.selected_indices = set()
         self.editing_index = None
         self.update_visual_selection()
@@ -397,12 +389,14 @@ def deselect_all(self, event=None):
 
     def notify_main_edit(self):
         if self.editing_index is not None and self.on_line_select_callback:
+            if self.editing_index < 0 or self.editing_index >= len(self.current_calque_lines):
+                return
             line_data = self.current_calque_lines[self.editing_index]
             merged = self.current_calque_global.copy()
             merged.update(line_data.get("override", {}))
             self.on_line_select_callback(self.editing_index, merged)
             
-def show_context_menu(self, event):
+    def show_context_menu(self, event):
         state = "normal" if self.clipboard else "disabled"
         try: self.context_menu.entryconfigure(1, state=state)
         except: pass
@@ -410,20 +404,21 @@ def show_context_menu(self, event):
 
     def action_copy(self):
         self.clipboard = []
-        for idx in sorted(list(self.selected_indices)): self.clipboard.append(self.current_calque_lines[idx])
-        
-def action_paste(self):
+        for idx in sorted(list(self.selected_indices)):
+            try:
+                self.clipboard.append(deepcopy(self.current_calque_lines[idx]))
+            except Exception:
+                pass
+                
+    def action_paste(self):
         if not self.clipboard: return
-        # Si on a une sélection -> insérer après la sélection maximale.
-        # Sinon -> si la liste contient déjà des lignes, insérer après le dernier élément.
-        # Si la liste est vide, retourner -1 pour indiquer un insert en tête (le callback décide).
         if self.selected_indices:
             insert_after = max(self.selected_indices)
         else:
             insert_after = len(self.current_calque_lines) - 1 if self.current_calque_lines else -1
         if self.on_paste_callback: self.on_paste_callback(insert_after, self.clipboard)
         
-def delete_line(self, index):
+    def delete_line(self, index):
         if self.on_delete_callback: self.on_delete_callback(index)
 
     def refresh_needed(self):
