@@ -4,15 +4,32 @@ from tkinter import ttk
 from copy import deepcopy
 
 class ToolTip:
-    def __init__(self, widget, text):
+    def __init__(self, widget, text_or_callable):
+        """
+        text_or_callable: either a string or a callable returning the string.
+        Using a callable (e.g. lambda: manager.t('key')) ensures the tooltip
+        text is evaluated at show time (useful for dynamic translations).
+        """
         self.widget = widget
-        self.text = text
+        self.text_or_callable = text_or_callable
         self.tip_window = None
         self.widget.bind("<Enter>", self.show_tip)
         self.widget.bind("<Leave>", self.hide_tip)
-    def show_tip(self, event=None):
-        if self.tip_window or not self.text: return
+
+    def _get_text(self):
         try:
+            if callable(self.text_or_callable):
+                return self.text_or_callable() or ""
+            return self.text_or_callable or ""
+        except Exception:
+            return ""
+
+    def show_tip(self, event=None):
+        if self.tip_window: return
+        text = self._get_text()
+        if not text: return
+        try:
+            # Prefer event screen coords when available
             if event is not None and getattr(event, 'x_root', None) is not None:
                 x = event.x_root + 20
                 y = event.y_root + 10
@@ -28,13 +45,21 @@ class ToolTip:
             self.tip_window = tw = tk.Toplevel(self.widget)
             tw.wm_overrideredirect(True)
             tw.wm_geometry(f"+{x}+{y}")
-            label = tk.Label(tw, text=self.text, justify=tk.LEFT, background="#ffffe0", relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 8))
+            label = tk.Label(tw, text=text, justify=tk.LEFT, background="#ffffe0", relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 8))
             label.pack(ipadx=1)
         except Exception:
-            pass
+            # Never allow tooltip errors to break the main UI
+            try:
+                if self.tip_window:
+                    self.tip_window.destroy()
+            except: pass
+            self.tip_window = None
+
     def hide_tip(self, event=None):
         if self.tip_window:
-            self.tip_window.destroy()
+            try:
+                self.tip_window.destroy()
+            except: pass
             self.tip_window = None
 
 COL_CONFIG = [
@@ -119,7 +144,7 @@ class LigneRow(tk.Frame):
 
             if self.is_deleted: val_str = "---"
 
-            l = tk.Label(self, text=val_str, fg="#666" if self.is_deleted else="#969696", bg=self.bg_color, anchor="c", font=("Segoe UI", 9))
+            l = tk.Label(self, text=val_str, fg="#666" if self.is_deleted else "#969696", bg=self.bg_color, anchor="c", font=("Segoe UI", 9))
             l.grid(row=0, column=current_col, sticky="ew", padx=1)
             self.columnconfigure(current_col, weight=weight)
             self.elements.append(l)
@@ -134,7 +159,7 @@ class LigneRow(tk.Frame):
         btn_edit = tk.Button(self.frame_actions, text="✎", command=self.on_edit_click, bg="#3e3e42", fg="white", bd=0, width=3, cursor="hand2")
         btn_edit.pack(side="left", padx=2)
         if self.is_deleted: btn_edit.config(state="disabled", bg="#222")
-        ToolTip(btn_edit, self.manager.t("z5_act_edit"))
+        ToolTip(btn_edit, lambda: self.manager.t("z5_act_edit"))
         
         can_reset = self.has_override or self.is_deleted
         state_reset = "normal" if can_reset else "disabled"
@@ -142,7 +167,7 @@ class LigneRow(tk.Frame):
         
         self.btn_reset = tk.Button(self.frame_actions, text="⟲", command=self.on_reset, state=state_reset, bg="#3e3e42", fg=fg_reset, bd=0, width=3, cursor="hand2")
         self.btn_reset.pack(side="left", padx=2)
-        ToolTip(self.btn_reset, self.manager.t("z5_act_reset"))
+        ToolTip(self.btn_reset, lambda: self.manager.t("z5_act_reset"))
 
         icon_del = "♻" if self.is_deleted else "🗑️"
         fg_del = "#4CAF50" if self.is_deleted else "#f48771"
@@ -150,7 +175,7 @@ class LigneRow(tk.Frame):
         
         btn_del = tk.Button(self.frame_actions, text=icon_del, command=self.on_toggle_delete, bg="#3e3e42", fg=fg_del, bd=0, width=3, cursor="hand2")
         btn_del.pack(side="left", padx=2)
-        ToolTip(btn_del, tooltip_del)
+        ToolTip(btn_del, lambda: tooltip_del)
 
         all_widgets = [self, self.lbl_idx, self.canvas_color, self.frame_actions] + self.elements
         for w in all_widgets:
@@ -273,7 +298,7 @@ class LignesPanel:
             self.header_labels.append((lbl, title_key))
             col_idx += 1
             
-        self.btn_back_calque = tk.Button(self.header, text="Retour Calque", command=self.deselect_all, bg="#444", fg="white", bd=0, font=("Segoe UI", 8), padx=5)
+        self.btn_back_calque = tk.Button(self.header, text="Retour Calque", command=self.deselect_all, bg="#444", fg="white", bd=0, font=("Segoe UI", 8, "bold"), padx=5)
         self.btn_back_calque.grid(row=0, column=98, sticky="e", padx=5)
 
         self.lbl_actions = tk.Label(self.header, text=self.t("z5_col_actions"), bg="#333333", fg="#007acc", width=12, font=("Segoe UI", 9, "bold"), anchor="e")
@@ -286,23 +311,23 @@ class LignesPanel:
         
         self.window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
         
-def on_canvas_configure(event):
-                self.canvas.itemconfig(self.window_id, width=event.width)
-                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            self.canvas.bind("<Configure>", on_canvas_configure)
-            self.list_frame.bind("<Configure", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-            self.canvas.configure(yscrollcommand=self.scrollbar.set)
-            
-            self.list_frame.bind("<Button-1>", self.deselect_all)
-            self.canvas.bind("<Button-1>", self.deselect_all)
-            
-            self.canvas.pack(side="left", fill="both", expand=True)
-            self.scrollbar.pack(side="right", fill="y")
+        def on_canvas_configure(event):
+            self.canvas.itemconfig(self.window_id, width=event.width)
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self.canvas.bind("<Configure>", on_canvas_configure)
+        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        self.list_frame.bind("<Button-1>", self.deselect_all)
+        self.canvas.bind("<Button-1>", self.deselect_all)
+        
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
 
-            self.context_menu = tk.Menu(self.parent, tearoff=0, bg="#2d2d30", fg="white")
-            self.context_menu.add_command(label=self.t("z5_ctx_copy"), command=self.action_copy)
-            self.context_menu.add_command(label=self.t("z5_ctx_paste"), command=self.action_paste)
-            self.clipboard = []
+        self.context_menu = tk.Menu(self.parent, tearoff=0, bg="#2d2d30", fg="white")
+        self.context_menu.add_command(label=self.t("z5_ctx_copy"), command=self.action_copy)
+        self.context_menu.add_command(label=self.t("z5_ctx_paste"), command=self.action_paste)
+        self.clipboard = []
 
     def t(self, key):
         if self.app: return self.app.t(key)
