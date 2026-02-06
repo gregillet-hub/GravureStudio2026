@@ -12,15 +12,28 @@ class ToolTip:
     def show_tip(self, event=None):
         if self.tip_window or not self.text: return
         try:
-            x, y, _, _ = self.widget.bbox("insert")
-            x += self.widget.winfo_rootx() + 25
-            y += self.widget.winfo_rooty() + 25
+            # If an event with screen coordinates is provided, use it (more reliable for mouse-hover)
+            if event is not None and getattr(event, 'x_root', None) is not None:
+                x = event.x_root + 20
+                y = event.y_root + 10
+            else:
+                # Try widget.bbox('insert') for Text/Entry widgets, otherwise fallback to root coordinates
+                try:
+                    x, y, _, _ = self.widget.bbox("insert")
+                    x = x + self.widget.winfo_rootx() + 25
+                    y = y + self.widget.winfo_rooty() + 25
+                except Exception:
+                    x = self.widget.winfo_rootx() + 20
+                    y = self.widget.winfo_rooty() + 20
+
             self.tip_window = tw = tk.Toplevel(self.widget)
             tw.wm_overrideredirect(True)
             tw.wm_geometry(f"+{x}+{y}")
             label = tk.Label(tw, text=self.text, justify=tk.LEFT, background="#ffffe0", relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 8))
             label.pack(ipadx=1)
-        except: pass
+        except Exception:
+            # Never let tooltip exceptions break the main UI
+            pass
     def hide_tip(self, event=None):
         if self.tip_window:
             self.tip_window.destroy()
@@ -195,13 +208,13 @@ class LigneRow(tk.Frame):
     def on_simple_click(self, event=None): 
         self.manager.highlight_row_only(self.index)
         
-    def on_edit_click(self): 
+def on_edit_click(self): 
         if self.is_deleted: return
         self.manager.select_row_for_editing(self.index)
         
-    def on_multi_select(self, event=None): self.manager.toggle_selection(self.index)
-    
-    def on_right_click(self, event=None):
+def on_multi_select(self, event=None): self.manager.toggle_selection(self.index)
+        
+def on_right_click(self, event=None):
         if self.index not in self.manager.selected_indices:
             self.manager.highlight_row_only(self.index)
         self.manager.show_context_menu(event)
@@ -288,7 +301,7 @@ class LignesPanel:
         
         self.window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
         
-        def on_canvas_configure(event):
+def on_canvas_configure(event):
             self.canvas.itemconfig(self.window_id, width=event.width)
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         self.canvas.bind("<Configure>", on_canvas_configure)
@@ -368,7 +381,7 @@ class LignesPanel:
         else: self.selected_indices.add(index)
         self.update_visual_selection()
         
-    def deselect_all(self, event=None):
+def deselect_all(self, event=None):
         self.selected_indices = set()
         self.editing_index = None
         self.update_visual_selection()
@@ -389,22 +402,28 @@ class LignesPanel:
             merged.update(line_data.get("override", {}))
             self.on_line_select_callback(self.editing_index, merged)
             
-    def show_context_menu(self, event):
+def show_context_menu(self, event):
         state = "normal" if self.clipboard else "disabled"
         try: self.context_menu.entryconfigure(1, state=state)
         except: pass
         self.context_menu.tk_popup(event.x_root, event.y_root)
-        
+
     def action_copy(self):
         self.clipboard = []
         for idx in sorted(list(self.selected_indices)): self.clipboard.append(self.current_calque_lines[idx])
         
-    def action_paste(self):
+def action_paste(self):
         if not self.clipboard: return
-        insert_after = max(self.selected_indices) if self.selected_indices else len(self.current_calque_lines) - 1
+        # Si on a une sélection -> insérer après la sélection maximale.
+        # Sinon -> si la liste contient déjà des lignes, insérer après le dernier élément.
+        # Si la liste est vide, retourner -1 pour indiquer un insert en tête (le callback décide).
+        if self.selected_indices:
+            insert_after = max(self.selected_indices)
+        else:
+            insert_after = len(self.current_calque_lines) - 1 if self.current_calque_lines else -1
         if self.on_paste_callback: self.on_paste_callback(insert_after, self.clipboard)
         
-    def delete_line(self, index):
+def delete_line(self, index):
         if self.on_delete_callback: self.on_delete_callback(index)
 
     def refresh_needed(self):
