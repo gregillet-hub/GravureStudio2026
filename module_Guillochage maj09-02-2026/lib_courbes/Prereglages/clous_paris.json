@@ -1,0 +1,13 @@
+{
+    "nom": "Clous de Paris",
+    "description": "Motif pyramidal classique",
+    "params": {
+        "traj_type": "Cercle",
+        "wave_type": "Triangle",
+        "nb_lines": 24,
+        "amplitude": 1.5,
+        "height": 12.0,
+        "rotation": 45,
+        "resolution": "Haute"
+    }
+}
