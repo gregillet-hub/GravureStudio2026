@@ -1,0 +1,7 @@
+﻿{
+    "name": "Module Guillochage",
+    "description": "Générateur de guillochage numérique pour horlogerie",
+    "version": "1.0",
+    "icon": "activity", 
+    "main_file": "guillochage_main.py"
+}

@@ -1,0 +1,25 @@
+GravureStudioV1 - Module Guillochage
+=====================================
+
+Version: 1.0
+Auteur: GREG
+Date: 2025
+
+Description:
+-----------
+Module professionnel de génération de motifs de guillochage pour l'horlogerie
+et la gravure artistique. Permet la création de motifs complexes basés sur
+des trajectoires et des ondes mathématiques.
+
+Fonctionnalités principales:
+----------------------------
+- Définition de formes de base (cercle, carré, spirale)
+- Gestion multi-calques avec paramètres indépendants
+- Bibliothèque extensible de trajectoires et d'ondes
+- Export SVG et DXF
+- Préréglages de motifs classiques
+- Interface multilingue (FR, EN, DE, etc....)
+
+Support:
+-------
+Pour toute question ou suggestion, consultez la documentation complète.

@@ -1,0 +1,13 @@
+{
+    "nom": "Grain d'Orge",
+    "description": "Motif allongé caractéristique",
+    "params": {
+        "traj_type": "Ligne Droite",
+        "wave_type": "Sinus",
+        "nb_lines": 18,
+        "amplitude": 2.0,
+        "height": 15.0,
+        "period": 2.0,
+        "resolution": "Moyenne"
+    }
+}
